@@ -289,27 +289,31 @@ def game_test(*args, **kwargs):
 			raise Exception('Test run exceeded %ds time limit' % timeout)
 		signal.signal(signal.SIGALRM, handler)
 
+	def disable_timelimit():
+		if TEST_TIMELIMIT and timeout:
+			signal.alarm(0)
+
 	def deco(func):
 		@wraps(func)
 		def wrapped(*args):
 			horizons.main.db = db
-			if not manual_session:
-				s, p = new_session(mapgen = mapgen, human_player = human_player, ai_players = ai_players)
 			if TEST_TIMELIMIT and timeout:
 				signal.alarm(timeout)
-			try:
-				if not manual_session:
-					return func(s, p, *args)
-				else:
-					return func(*args)
-			finally:
-				if not manual_session:
-					s.end()
-				else:
-					SPTestSession.cleanup()
 
-				if TEST_TIMELIMIT and timeout:
-					signal.alarm(0)
+			if manual_session:
+				try:
+					return func(*args)
+				finally:
+					SPTestSession.cleanup()
+					disable_timelimit()
+			else:
+				s, p = new_session(mapgen = mapgen, human_player = human_player, ai_players = ai_players)
+				try:
+					return func(s, p, *args)
+				finally:
+					s.end()
+					disable_timelimit()
+
 		return wrapped
 
 	if no_decorator_arguments:
