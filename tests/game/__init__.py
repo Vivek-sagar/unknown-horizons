@@ -40,21 +40,15 @@ except ImportError:
 import horizons.main
 import horizons.world	# needs to be imported before session
 from horizons.ai.aiplayer import AIPlayer
-from horizons.ai.trader import Trader
 from horizons.command.building import Build
 from horizons.command.unit import CreateUnit
-from horizons.constants import GROUND, UNITS, BUILDINGS, GAME_SPEED, RES
-from horizons.entities import Entities
+from horizons.constants import GROUND, UNITS, BUILDINGS, RES
 from horizons.ext.dummy import Dummy
 from horizons.extscheduler import ExtScheduler
 from horizons.scheduler import Scheduler
 from horizons.spsession import SPSession
-from horizons.util import (Color, DbReader, Rect, WorldObject, LivingObject,
-						   SavegameAccessor, Point, DifficultySettings)
-from horizons.util.lastactiveplayersettlementmanager import LastActivePlayerSettlementManager
+from horizons.util import Color, DbReader, Rect, SavegameAccessor, Point, DifficultySettings
 from horizons.util.uhdbaccessor import read_savegame_template
-from horizons.world import World
-from horizons.world.component.namedcomponent import NamedComponent
 from horizons.world.component.storagecomponent import StorageComponent
 
 from tests import RANDOM_SEED
@@ -69,6 +63,7 @@ def setup_package():
 	"""
 	global db
 	db = horizons.main._create_main_db()
+	ExtScheduler.create_instance(Dummy)
 
 
 def create_map():
@@ -141,41 +136,8 @@ def _dbreader_convert_dummy_objects():
 class SPTestSession(SPSession):
 
 	def __init__(self, db, rng_seed=None):
-		"""
-		Unfortunately, right now there is no other way to setup Dummy versions of the GUI,
-		View etc., unless we want to patch the references in the session module.
-		"""
-		super(LivingObject, self).__init__()
-		self.gui = Dummy()
-		self.db = db
-		self.savecounter = 0	# this is a new game.
-		self.is_alive = True
-
-		WorldObject.reset()
-		NamedComponent.reset()
-		AIPlayer.clear_caches()
-
-		# Game
-		self.random = self.create_rng(rng_seed)
-		self.timer = self.create_timer()
-		Scheduler.create_instance(self.timer)
-		ExtScheduler.create_instance(Dummy)
-		self.manager = self.create_manager()
-		self.view = Dummy()
-		self.view.renderer = Dummy()
-		Entities.load(self.db)
-		self.scenario_eventhandler = Dummy()
-		self.campaign = {}
-
-		# GUI
-		self.gui.session = self
-		self.ingame_gui = Dummy()
-		LastActivePlayerSettlementManager.create_instance(self)
-
-		self.selected_instances = set()
-		self.selection_groups = [set()] * 10 # List of sets that holds the player assigned unit groups.
-
-		GAME_SPEED.TICKS_PER_SECOND = 16
+		super(SPTestSession, self).__init__(Dummy(), db, rng_seed)
+		self.reset_autosave = mock.Mock()
 
 	def save(self, *args, **kwargs):
 		"""
@@ -190,33 +152,23 @@ class SPTestSession(SPSession):
 				return super(SPTestSession, self).save(*args, **kwargs)
 
 	def load(self, savegame, players):
-		"""
-		Stripped version of the original code. We don't need to load selections,
-		or a scenario, setting up the gui or view.
-		"""
 		self.savegame = savegame
-		self.savegame_db = SavegameAccessor(self.savegame)
-
-		self.savecounter = 1
-
-		self.world = World(self)
-		self.world._init(self.savegame_db)
-		for i in sorted(players):
-			self.world.setup_player(i['id'], i['name'], i['color'], i['local'], i['is_ai'], i['difficulty'])
-		self.manager.load(self.savegame_db)
+		super(SPTestSession, self).load(savegame, players, False, False, 0)
 
 	def end(self, keep_map=False):
 		"""
 		Clean up temporary files.
 		"""
 		super(SPTestSession, self).end()
+
 		# Find all islands in the map first
+		savegame_db = SavegameAccessor(self.savegame)
 		if not keep_map:
-			for (island_file, ) in self.savegame_db('SELECT file FROM island'):
-				if island_file[:7] != 'random:': # random islands don't exist as files
+			for (island_file, ) in savegame_db('SELECT file FROM island'):
+				if island_file.startswith('random:'): # random islands don't exist as files
 					os.remove(island_file)
 		# Finally remove savegame
-		self.savegame_db.close()
+		savegame_db.close()
 		os.remove(self.savegame)
 
 	@classmethod
@@ -252,16 +204,12 @@ def new_session(mapgen=create_map, rng_seed=RANDOM_SEED, human_player = True, ai
 
 	players = []
 	if human_player:
-		players.append({'id': 1, 'name': 'foobar', 'color': Color[1], 'local': True, 'is_ai': False, 'difficulty': human_difficulty})
+		players.append({'id': 1, 'name': 'foobar', 'color': Color[1], 'local': True, 'ai': False, 'difficulty': human_difficulty})
 	for i in xrange(ai_players):
 		id = i + human_player + 1
-		players.append({'id': id, 'name': ('AI' + str(i)), 'color': Color[id], 'local': id == 1, 'is_ai': True, 'difficulty': ai_difficulty})
+		players.append({'id': id, 'name': ('AI' + str(i)), 'color': Color[id], 'local': id == 1, 'ai': True, 'difficulty': ai_difficulty})
 
 	session.load(mapgen(), players)
-	session.world.init_fish_indexer()
-	# use different trader id here, so that init_new_world can be called
-	# (else there would be a worldid conflict)
-	session.world.trader = Trader(session, 99999 + 42, 'Free Trader', Color())
 
 	if ai_players > 0: # currently only ai tests use the ships
 		for player in session.world.players:
