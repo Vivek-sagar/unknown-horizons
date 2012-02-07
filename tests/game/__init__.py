@@ -137,7 +137,7 @@ class SPTestSession(SPSession):
 
 	def __init__(self, db, rng_seed=None):
 		super(SPTestSession, self).__init__(Dummy(), db, rng_seed)
-		self.reset_autosave = mock.Mock()
+		self.reset_autosave = Dummy()
 
 	def save(self, *args, **kwargs):
 		"""
@@ -165,7 +165,7 @@ class SPTestSession(SPSession):
 		savegame_db = SavegameAccessor(self.savegame)
 		if not keep_map:
 			for (island_file, ) in savegame_db('SELECT file FROM island'):
-				if island_file.startswith('random:'): # random islands don't exist as files
+				if not island_file.startswith('random:'): # random islands don't exist as files
 					os.remove(island_file)
 		# Finally remove savegame
 		savegame_db.close()
